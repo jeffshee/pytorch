@@ -1,5 +1,7 @@
+import random
+
 from torch.utils.data import IterDataPipe, Sampler, SequentialSampler
-from typing import TypeVar, Type, Iterator, Sized, Optional, Tuple, Dict
+from typing import TypeVar, Type, Iterator, Sized, Optional, Tuple, Dict, List
 
 T_co = TypeVar('T_co', covariant=True)
 
@@ -39,4 +41,50 @@ class SamplerIterDataPipe(IterDataPipe[T_co]):
         # Dataset has been tested as `Sized`
         if isinstance(self.sampler, Sized) and len(self.sampler) >= 0:
             return len(self.sampler)
+        raise NotImplementedError
+
+
+class ShuffleIterDataPipe(IterDataPipe[T_co]):
+    r""" :class:`ShuffleIterDataPipe`
+
+    Iterable DataPipe to shuffle the input DataPipe with a buffer. The buffer
+    with `buffer_size` is filled with elements from the datapipe first. Then,
+    each item will be yielded from the buffer by reservoir sampling via iterator.
+
+    `buffer_size` is required to be larger than 0. For `buffer_size == 1`, the
+    datapipe is not shuffled. In order to fully shuffle all elements from datapipe,
+    `buffer_size` is required to be greater than or equal to the size of datapipe.
+    args:
+        datapipe: The IterDataPipe being shuffled
+        buffer_size: The buffer size for shuffling
+    """
+    datapipe: IterDataPipe[T_co]
+    buffer_size: int
+    _buffer: List[T_co]
+
+    def __init__(self,
+                 datapipe: IterDataPipe[T_co],
+                 *,
+                 buffer_size: int) -> None:
+        super().__init__()
+        assert buffer_size > 0, "buffer_size should be larger than 0"
+        self.datapipe = datapipe
+        self.buffer_size = buffer_size
+        self._buffer = []
+
+    def __iter__(self) -> Iterator[T_co]:
+        for x in self.datapipe:
+            if len(self._buffer) == self.buffer_size:
+                idx = random.randint(0, self.buffer_size - 1)
+                yield self._buffer[idx]
+                self._buffer[idx] = x
+            else:
+                self._buffer.append(x)
+        random.shuffle(self._buffer)
+        while self._buffer:
+            yield self._buffer.pop()
+
+    def __len__(self) -> int:
+        if isinstance(self.datapipe, Sized) and len(self.datapipe) >= 0:
+            return len(self.datapipe)
         raise NotImplementedError
