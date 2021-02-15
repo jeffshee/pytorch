@@ -3,12 +3,12 @@ from torch.serialization import normalize_storage_type, location_tag
 import io
 import pickletools
 from .find_file_dependencies import find_files_source_depends_on
-from ._custom_import_pickler import create_custom_import_pickler, import_module_from_importers
+from ._custom_import_pickler import create_custom_import_pickler
 from ._importlib import _normalize_path
 from ._mangling import is_mangled
 from ._stdlib import is_stdlib_module
+from .module_environment import ModuleEnv
 import types
-import importlib
 from typing import List, Any, Callable, Dict, Tuple, Union, Iterable, BinaryIO, Optional
 from pathlib import Path
 import linecache
@@ -44,18 +44,15 @@ class PackageExporter:
     for further code dependencies (`dependencies=True`). It looks for import statements,
     resolves relative references to qualified module names, and calls :method:`require_module`
     on each it finds, recursively resolving dependencies.
-
     """
 
-    importers: List[Callable[[str], Any]]
-    """ A list of functions that will be called in order to find the module assocated
-    with module names referenced by other modules or by pickled objects. Initialized to
-    `[importlib.import_module]` by default. When pickling code or objects that was loaded
-    from an imported packaged, that `importer.import_module` should be put into the importer list.
-    When a name conflict occurs between importers, the first importer in the list takes precedence,
-    and only objects that refer to this first importers class can be saved
+    """ A module environment that will be searched in order to find the module assocated with module names
+    referenced by other modules or by pickled objects. The default module environment just uses DefaultImporter,
+    which searches the Python environment. When pickling code or objects loaded from an imported package,
+    you should create a ModuleEnv that has that `PackageImporter` listed first. When a name conflict occurs
+    between importers, the first importer in the list takes precedence.
     """
-
+    module_env: ModuleEnv
 
     def __init__(self, f: Union[str, Path, BinaryIO], verbose: bool = True):
         """
@@ -79,7 +76,7 @@ class PackageExporter:
         self.external : List[str] = []
         self.provided : Dict[str, bool] = {}
         self.verbose = verbose
-        self.importers = [importlib.import_module]
+        self.module_env = ModuleEnv()
         self.patterns : List[Tuple[Any, Callable[[str], None]]] = []  # 'any' is 're.Pattern' but breaks old mypy
         self.debug_deps : List[Tuple[str, str]] = []
 
@@ -173,7 +170,7 @@ class PackageExporter:
 
     def _import_module(self, module_name: str):
         try:
-            return import_module_from_importers(module_name, self.importers)
+            return self.module_env.import_module(module_name)
         except ModuleNotFoundError as e:
             if not is_mangled(module_name):
                 raise
@@ -272,7 +269,7 @@ node [shape=box];
         filename = self._filename(package, resource)
         # Write the pickle data for `obj`
         data_buf = io.BytesIO()
-        pickler = create_custom_import_pickler(data_buf, self.importers)
+        pickler = create_custom_import_pickler(data_buf, self.module_env)
         pickler.persistent_id = self._persistent_id
         pickler.dump(obj)
         data_value = data_buf.getvalue()
