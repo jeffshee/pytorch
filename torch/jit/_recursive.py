@@ -127,6 +127,8 @@ def infer_concrete_type_builder(nn_module, share_types=True):
             elif isinstance(item, torch.jit.Attribute):
                 ann_to_type = torch.jit.annotations.ann_to_type(item.type, _jit_internal.fake_range())
                 attr_type = torch._C.InferredType(ann_to_type)
+            elif isinstance(item, torch.jit.ScriptObjectWrapper):
+                attr_type = torch._C._jit_try_infer_type(item._c)
             else:
                 attr_type = torch._C._jit_try_infer_type(item)
                 inferred = True
@@ -271,6 +273,12 @@ def infer_concrete_type_builder(nn_module, share_types=True):
                 name,
                 torch._C._jit_try_infer_type(value).type(),
                 value)
+            continue
+
+        # Handle ScriptObject attributes.
+        if isinstance(value, torch.jit.ScriptObjectWrapper):
+            attr_type, _ = infer_type(name, value)
+            concrete_type_builder.add_attribute(name, attr_type.type(), False, False)
             continue
 
         # If we got here, this is a regular "data" attribute, Add it to the concrete type
@@ -766,6 +774,12 @@ def try_compile_fn(fn, loc):
     # object
     rcb = _jit_internal.createResolutionCallbackFromClosure(fn)
     return torch.jit.script(fn, _rcb=rcb)
+
+def wrap_script_object(script_object):
+    """
+    Wrap this torch._C.Object in a Python ScriptObjectWrapper.
+    """
+    return torch.jit.ScriptObjectWrapper(script_object)
 
 def wrap_cpp_module(cpp_module):
     """
